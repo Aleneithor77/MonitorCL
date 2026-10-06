@@ -4,5 +4,6 @@ contextBridge.exposeInMainWorld('api',{
  saveConfig:c=>ipcRenderer.invoke('save-config',c),
  resetConfig:()=>ipcRenderer.invoke('reset-config'),
  getStatus:()=>ipcRenderer.invoke('get-status'),
+ getScanState:()=>ipcRenderer.invoke('get-scan-state'),
  testSound:()=>ipcRenderer.invoke('test-sound')
 });
