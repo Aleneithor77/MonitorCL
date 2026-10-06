@@ -31,7 +31,7 @@ const DEFAULTS={
  'UPS','NO BREAK','NOBREAK','REGULADOR','REGULADORES'
  ]};
 
-let cfg,db,mainWin,tray,timers=[],scanBusy=false,appQuitting=false,alertWins=[],lastScan={Programadas:null,Abiertas:null};
+let cfg,db,mainWin,tray,timers=[],scanBusy={Programadas:false,Abiertas:false},appQuitting=false,alertWins=[],lastScan={Programadas:null,Abiertas:null};
 const dataDir=()=>app.getPath('userData'),configPath=()=>path.join(dataDir(),'config.json');
 const norm=s=>String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^\\p{L}\\p{N}]+/gu,' ').replace(/\\s+/g,' ').trim().toUpperCase();
 const clone=o=>JSON.parse(JSON.stringify(o));
@@ -91,8 +91,8 @@ function pickField(r,patterns,fallback=''){const hit=Object.entries(r.fields||{}
 function dateField(r){const byHeader=pickField(r,['FECHA','DATE','PUBLICACION','PUBLICACIÓN']);if(byHeader)return byHeader;return (r.c||[]).find(x=>/\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/.test(x))||''}
 function modalityFrom(c,raw){const direct=c.find(x=>/^Global$/i.test(x)||/^Rengl[oó]n$/i.test(x));if(direct)return direct;const m=String(raw||'').match(/\b(Global|Rengl[oó]n)\b/i);return m?m[1]:''}
 async function scan(url,source){
- if(!inSchedule()||scanBusy)return;
- scanBusy=true;
+ if(!inSchedule()||scanBusy[source])return;
+ scanBusy[source]=true;
  let browser=null;
  try{
   browser=await chromium.launch({headless:true});
@@ -124,7 +124,7 @@ async function scan(url,source){
    }
   }
  }catch(err){console.error('MONITOR CL: Playwright no pudo iniciar',err?.message||err)}
- finally{scanBusy=false;if(browser){try{await browser.close()}catch{}}}
+ finally{scanBusy[source]=false;if(browser){try{await browser.close()}catch{}}}
 }
 function restartTimers(){timers.forEach(clearInterval);timers=[];if(cfg.scheduledInterval>0)timers.push(setInterval(()=>scan(cfg.scheduledUrl,'Programadas'),cfg.scheduledInterval));if(cfg.openInterval>0)timers.push(setInterval(()=>scan(cfg.openUrl,'Abiertas'),cfg.openInterval));if(inSchedule()){scan(cfg.scheduledUrl,'Programadas');scan(cfg.openUrl,'Abiertas');}}
 function icon(){return nativeImage.createFromBuffer(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAsUlEQVR4nO2VSw6AIAwFkZNoohu9/1F0o4neRLcE6OeJMST0LbUwA0h1zmKxtJ4OHdCP8y3VXMemnldVqIG+lWFfUuBzX8kxw7RAIqRADs6BNSI5iaxADEfAkkgskQgg8HBy5FhCCc/BucSTUmefS8jxXCG1KgpGPed2hxX4I3ULoFuKHlkigLTQGIZc1ZBTXx+gJFCRok7ISUgin/0LNCKaSN+VeA1L4JrxdfcBi6WJPKt2XPc3yLdwAAAAAElFTkSuQmCC','base64'))}
