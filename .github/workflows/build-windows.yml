@@ -16,6 +16,8 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - name: Verify JavaScript
+        run: node --check src/main.js
       - name: Install dependencies
         run: npm ci
       - name: Build installer
