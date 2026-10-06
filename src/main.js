@@ -43,9 +43,9 @@ function hm(x){const [h,m]=String(x||'00:00').split(':').map(Number);return h*60
 function classify(raw,mod){if(!/^GLOBAL$/i.test(norm(mod)))return null;const h=norm(raw);if(cfg.exclusions.some(x=>h.includes(norm(x))))return null;return cfg.priorities.some(x=>h.includes(norm(x)))?'ALTA':'NORMAL'}
 function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function closeAlert(w){try{if(w&&!w.isDestroyed())w.close()}catch{}alertWins=alertWins.filter(x=>x!==w)}
-function writeTone(file,seconds,f1,f2){const rate=8000,n=Math.floor(rate*seconds),data=Buffer.alloc(n),header=Buffer.alloc(44);header.write('RIFF',0);header.writeUInt32LE(36+n,4);header.write('WAVE',8);header.write('fmt ',12);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(rate,24);header.writeUInt32LE(rate,28);header.writeUInt16LE(1,32);header.writeUInt16LE(8,34);header.write('data',36);header.writeUInt32LE(n,40);for(let i=0;i<n;i++){const t=i/rate,f=t<seconds*.55?f1:f2,env=Math.min(1,i/(rate*.01),(n-i)/(rate*.04));data[i]=Math.max(0,Math.min(255,128+Math.round(Math.sin(2*Math.PI*f*t)*115*env)))}fs.writeFileSync(file,Buffer.concat([header,data]))}
-function ensureSounds(){const dir=path.join(dataDir(),'sounds');fs.mkdirSync(dir,{recursive:true});const normal=path.join(dir,'alerta.wav'),priority=path.join(dir,'prioridad.wav'),soft=path.join(dir,'suave.wav');if(!fs.existsSync(normal))writeTone(normal,1,880,1320);if(!fs.existsSync(priority))writeTone(priority,2,660,1320);if(!fs.existsSync(soft))writeTone(soft,1,440,660);return{normal,priority,soft}}
-function playSound(high){if(process.platform!=='win32')return;const file=high?ensureSounds().priority:ensureSounds().normal,safe=file.replace(/'/g,"''");execFile('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command',"$p=New-Object System.Media.SoundPlayer '"+safe+"';$p.PlaySync()"],{windowsHide:true},()=>{})}
+function writeTone(file,seconds,f1,f2){const rate=12000,n=Math.floor(rate*seconds),data=Buffer.alloc(n),header=Buffer.alloc(44);header.write('RIFF',0);header.writeUInt32LE(36+n,4);header.write('WAVE',8);header.write('fmt ',12);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(rate,24);header.writeUInt32LE(rate,28);header.writeUInt16LE(1,32);header.writeUInt16LE(8,34);header.write('data',36);header.writeUInt32LE(n,40);for(let i=0;i<n;i++){const t=i/rate,f=t<seconds*.55?f1:f2,env=Math.min(1,i/(rate*.01),(n-i)/(rate*.04));data[i]=Math.max(0,Math.min(255,128+Math.round(Math.sin(2*Math.PI*f*t)*126*env)))}fs.writeFileSync(file,Buffer.concat([header,data]))}
+function ensureSounds(){const dir=path.join(dataDir(),'sounds');fs.mkdirSync(dir,{recursive:true});const normal=path.join(dir,'alerta-v2.wav'),priority=path.join(dir,'prioridad-v2.wav'),soft=path.join(dir,'suave-v2.wav');if(!fs.existsSync(normal))writeTone(normal,1.2,880,1320);if(!fs.existsSync(priority))writeTone(priority,2.2,660,1320);if(!fs.existsSync(soft))writeTone(soft,.8,440,660);return{normal,priority,soft}}
+function playSound(high,forceNormal=false){if(process.platform!=='win32')return;const useSoft=!forceNormal&&new Date().getHours()>=20,tones=ensureSounds(),file=useSoft?tones.soft:(high?tones.priority:tones.normal),safe=file.replace(/'/g,"''");soundQueue=soundQueue.then(()=>new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command',"$p=New-Object System.Media.SoundPlayer '"+safe+"';$p.PlaySync()"],{windowsHide:true},()=>resolve())))}
 function showAlert(r,high){
  playSound(high);
  const w=new BrowserWindow({width:430,height:300,frame:false,resizable:false,alwaysOnTop:true,skipTaskbar:true,show:false,backgroundColor:high?'#fff4a8':'#fff9c4',webPreferences:{contextIsolation:true}});
@@ -63,7 +63,7 @@ async function waitForRows(page,timeout=20000){
  const start=Date.now();
  while(Date.now()-start<timeout){
   try{
-   const n=await page.locator('a[href*="solicitud-de-cotizacion"],a[routerlink*="solicitud-de-cotizacion"],a[href*="solicitud"],a[routerlink*="solicitud"]').count();
+   const n=await page.locator('tr,[role="row"],mat-row,.mat-mdc-row').evaluateAll(rows=>rows.filter(r=>/\\b\\d{4}-\\d{1,2}-\\d{1,2}-\\d{1,2}-CL-\\d+\\b/i.test(r.innerText||'')).length);
    if(n>0)return true;
   }catch{}
   await page.waitForTimeout(500);
@@ -141,4 +141,4 @@ ipcMain.handle('save-config',(e,c)=>{cfg={...clone(DEFAULTS),...c};if(!String(cf
 ipcMain.handle('reset-config',()=>{cfg=clone(DEFAULTS);saveConfig();restartTimers();return cfg});
 ipcMain.handle('get-status',()=>inSchedule()?'ACTIVO':'EN ESPERA');
 ipcMain.handle('get-last-scans',()=>lastScan);
-ipcMain.handle('test-sound',async()=>{playSound(false);return true});
+ipcMain.handle('test-sound',async()=>{playSound(false,true);return true});
