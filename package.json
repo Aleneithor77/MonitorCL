@@ -8,10 +8,11 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win nsis",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps && playwright install chromium"
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0"
+    "better-sqlite3": "^11.7.0",
+    "playwright": "^1.55.0"
   },
   "devDependencies": {
     "electron": "^38.2.0",
@@ -21,15 +22,33 @@
     "appId": "pa.monitorcl.app",
     "productName": "Monitor CL",
     "artifactName": "MonitorCL_Setup.exe",
-    "directories": { "output": "dist" },
-    "files": ["src/**/*", "package.json"],
-    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "node_modules/playwright/**/*",
+      "node_modules/playwright-core/**/*",
+      "node_modules/.bin/playwright*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Monitor CL 👀"
-    }
+    },
+    "extraMetadata": {}
   }
 }
