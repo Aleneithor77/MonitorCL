@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - name: Verify JavaScript
         run: node --check src/main.js
       - name: Install dependencies
@@ -24,9 +24,10 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install chromium
       - name: Build installer
-        run: npm run dist
+        run: npm run dist -- --publish never
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: MonitorCL-Windows
           path: dist/MonitorCL_Setup.exe
+          if-no-files-found: error
