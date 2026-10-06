@@ -2,8 +2,8 @@ const {app,BrowserWindow,Tray,Menu,nativeImage,ipcMain,Notification}=require('el
 const path=require('path'),fs=require('fs'),{execFile}=require('child_process'),Database=require('better-sqlite3');
 
 const DEFAULTS={
- scheduledUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea',
- openUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea',
+ scheduledUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea?q=Qf1EjOi8GZhR3clJye',
+ openUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea?q=9hjOi8GZhR3clJye',
  scheduledInterval:30000,openInterval:3600000,
  schedules:[{days:[1,2,3,4,5],start:'06:00',end:'20:00'},{days:[6],start:'07:00',end:'14:00'}],
  soundDevice:'default',
@@ -35,8 +35,7 @@ let cfg,db,mainWin,tray,timers=[],isScanning=false,appQuitting=false,alertWins=[
 const dataDir=()=>app.getPath('userData'),configPath=()=>path.join(dataDir(),'config.json');
 const norm=s=>String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^\\p{L}\\p{N}]+/gu,' ').replace(/\\s+/g,' ').trim().toUpperCase();
 const clone=o=>JSON.parse(JSON.stringify(o));
-function cleanScheduledUrl(u){try{const x=new URL(String(u||''));x.searchParams.delete('q');return x.toString()}catch{return String(u||'').replace(/[?&]q=[^&#]*/,'').replace(/[?&]$/,'')}}
-function loadConfig(){try{cfg={...clone(DEFAULTS),...JSON.parse(fs.readFileSync(configPath(),'utf8'))};cfg.scheduledUrl=cleanScheduledUrl(cfg.scheduledUrl)}catch{cfg=clone(DEFAULTS);saveConfig()}}
+function loadConfig(){try{cfg={...clone(DEFAULTS),...JSON.parse(fs.readFileSync(configPath(),'utf8'))};if(!String(cfg.scheduledUrl||'').includes('?q='))cfg.scheduledUrl=DEFAULTS.scheduledUrl;if(!String(cfg.openUrl||'').includes('?q='))cfg.openUrl=DEFAULTS.openUrl}catch{cfg=clone(DEFAULTS);saveConfig()}}
 function saveConfig(){fs.mkdirSync(dataDir(),{recursive:true});fs.writeFileSync(configPath(),JSON.stringify(cfg,null,2),'utf8')}
 function initDb(){db=new Database(path.join(dataDir(),'monitorcl.db'));db.pragma('journal_mode=WAL');db.exec('CREATE TABLE IF NOT EXISTS records(cl TEXT PRIMARY KEY,detected_at TEXT,source TEXT,modality TEXT,entity TEXT,description TEXT,date_text TEXT,url TEXT,classification TEXT,notified INTEGER DEFAULT 0)')}
 function inSchedule(){const n=new Date(),day=n.getDay()||7,min=n.getHours()*60+n.getMinutes();return (cfg.schedules||[]).some(s=>s.days.includes(day)&&min>=hm(s.start)&&min<hm(s.end))}
@@ -44,7 +43,11 @@ function hm(x){const [h,m]=String(x||'00:00').split(':').map(Number);return h*60
 function classify(raw,mod){if(!/^GLOBAL$/i.test(norm(mod)))return null;const h=norm(raw);if(cfg.exclusions.some(x=>h.includes(norm(x))))return null;return cfg.priorities.some(x=>h.includes(norm(x)))?'ALTA':'NORMAL'}
 function esc(s){return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function closeAlert(w){try{if(w&&!w.isDestroyed())w.close()}catch{}alertWins=alertWins.filter(x=>x!==w)}
+function writeTone(file,seconds,f1,f2){const rate=8000,n=Math.floor(rate*seconds),data=Buffer.alloc(n),header=Buffer.alloc(44);header.write('RIFF',0);header.writeUInt32LE(36+n,4);header.write('WAVE',8);header.write('fmt ',12);header.writeUInt32LE(16,16);header.writeUInt16LE(1,20);header.writeUInt16LE(1,22);header.writeUInt32LE(rate,24);header.writeUInt32LE(rate,28);header.writeUInt16LE(1,32);header.writeUInt16LE(8,34);header.write('data',36);header.writeUInt32LE(n,40);for(let i=0;i<n;i++){const t=i/rate,f=t<seconds*.55?f1:f2,env=Math.min(1,i/(rate*.01),(n-i)/(rate*.04));data[i]=Math.max(0,Math.min(255,128+Math.round(Math.sin(2*Math.PI*f*t)*115*env)))}fs.writeFileSync(file,Buffer.concat([header,data]))}
+function ensureSounds(){const dir=path.join(dataDir(),'sounds');fs.mkdirSync(dir,{recursive:true});const normal=path.join(dir,'alerta.wav'),priority=path.join(dir,'prioridad.wav');if(!fs.existsSync(normal))writeTone(normal,1,880,1320);if(!fs.existsSync(priority))writeTone(priority,2,660,1320);return{normal,priority}}
+function playSound(high){if(process.platform!=='win32')return;const file=high?ensureSounds().priority:ensureSounds().normal,safe=file.replace(/'/g,"''");execFile('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command',"$p=New-Object System.Media.SoundPlayer '"+safe+"';$p.PlaySync()"],{windowsHide:true},()=>{})}
 function showAlert(r,high){
+ playSound(high);
  const w=new BrowserWindow({width:430,height:300,frame:false,resizable:false,alwaysOnTop:true,skipTaskbar:true,show:false,backgroundColor:high?'#fff4a8':'#fff9c4',webPreferences:{contextIsolation:true}});
  alertWins.push(w);
  const title=high?'ALTA PRIORIDAD':'NUEVA COTIZACIÓN';
@@ -115,8 +118,8 @@ async function scan(url,source){
   for(let attempt=1;attempt<=3;attempt++){
    try{
     win=new BrowserWindow({show:false,webPreferences:{contextIsolation:true}});
-    const targetUrl=source==='Programadas'?cleanScheduledUrl(url):url;\n    await win.loadURL(targetUrl,{waitUntil:'domcontentloaded',timeout:30000});
-    if(!await waitForRows(win,15000))throw new Error('Sin cotizaciones visibles tras cargar la página');
+    await win.loadURL(url,{waitUntil:'domcontentloaded',timeout:30000});
+    if(!await waitForRows(win,20000))throw new Error('Sin cotizaciones visibles tras cargar la página');
     const rows=await extractAllPages(win),seen=new Set();
     for(const r of rows){
      if(!r.cl||seen.has(r.cl)||db.prepare('SELECT 1 FROM records WHERE cl=?').get(r.cl))continue;
@@ -142,9 +145,9 @@ function listWindow(title,sql){const rows=db.prepare(sql).all();const w=new Brow
 function trayMenu(){tray.setContextMenu(Menu.buildFromTemplate([{label:'Registros nuevos — últimos 30 minutos',click:()=>listWindow('Registros nuevos — últimos 30 minutos',"SELECT * FROM records WHERE detected_at>=datetime('now','-30 minutes') ORDER BY detected_at DESC")},{label:'Alta prioridad — últimos 20 minutos',click:()=>listWindow('Alta prioridad — últimos 20 minutos',"SELECT * FROM records WHERE classification='ALTA' AND detected_at>=datetime('now','-20 minutes') ORDER BY detected_at DESC")},{type:'separator'},{label:'Configuración',click:openWindow},{label:'Cerrar Monitor CL',click:()=>{appQuitting=true;app.quit()}}]))}
 app.on('second-instance',()=>openWindow());
 app.on('before-quit',()=>{appQuitting=true;timers.forEach(clearInterval);alertWins.forEach(closeAlert)});
-app.whenReady().then(()=>{if(!app.requestSingleInstanceLock())return app.quit();if(process.platform==='win32')app.setLoginItemSettings({openAtLogin:true,path:process.execPath,args:['--hidden']});loadConfig();initDb();mainWin=new BrowserWindow({width:920,height:760,show:false,title:'MONITOR CL 👀',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true}});mainWin.loadFile(path.join(__dirname,'index.html'));mainWin.on('close',e=>{if(!appQuitting){e.preventDefault();mainWin.hide()}});tray=new Tray(icon());tray.setToolTip('MONITOR CL 👀');tray.on('double-click',openWindow);trayMenu();restartTimers();if(!process.argv.includes('--hidden'))mainWin.show();});
+app.whenReady().then(()=>{if(!app.requestSingleInstanceLock())return app.quit();if(process.platform==='win32')app.setLoginItemSettings({openAtLogin:true,path:process.execPath,args:['--hidden']});loadConfig();initDb();ensureSounds();mainWin=new BrowserWindow({width:920,height:760,show:false,title:'MONITOR CL 👀',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true}});mainWin.loadFile(path.join(__dirname,'index.html'));mainWin.on('close',e=>{if(!appQuitting){e.preventDefault();mainWin.hide()}});tray=new Tray(icon());tray.setToolTip('MONITOR CL 👀');tray.on('double-click',openWindow);trayMenu();restartTimers();if(!process.argv.includes('--hidden'))mainWin.show();});
 ipcMain.handle('get-config',()=>cfg);
-ipcMain.handle('save-config',(e,c)=>{cfg={...clone(DEFAULTS),...c};cfg.scheduledUrl=cleanScheduledUrl(cfg.scheduledUrl);saveConfig();restartTimers();return cfg});
+ipcMain.handle('save-config',(e,c)=>{cfg={...clone(DEFAULTS),...c};if(!String(cfg.scheduledUrl||'').includes('?q='))cfg.scheduledUrl=DEFAULTS.scheduledUrl;if(!String(cfg.openUrl||'').includes('?q='))cfg.openUrl=DEFAULTS.openUrl;saveConfig();restartTimers();return cfg});
 ipcMain.handle('reset-config',()=>{cfg=clone(DEFAULTS);saveConfig();restartTimers();return cfg});
 ipcMain.handle('get-status',()=>inSchedule()?'ACTIVO':'EN ESPERA');
-ipcMain.handle('test-sound',async()=>{if(process.platform==='win32'){await new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command','for($i=0;$i -lt 3;$i++){[System.Media.SystemSounds]::Exclamation.Play();Start-Sleep -Milliseconds 350}'],{windowsHide:true},()=>resolve()));}else{new Notification({title:'MONITOR CL 👀',body:'Prueba de sonido',silent:false}).show()}return true});
+ipcMain.handle('test-sound',async()=>{playSound(false);return true});
