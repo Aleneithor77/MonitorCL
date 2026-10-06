@@ -8,6 +8,8 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: 0
     steps:
       - name: Checkout
         uses: actions/checkout@v4
