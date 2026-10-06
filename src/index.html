@@ -4,7 +4,7 @@ body{font:14px Segoe UI;margin:0;background:#f3f5f7;color:#222}header{background
 <div class="card"><h3>Fuentes e intervalos</h3><label>URL Programadas</label><input id="s"><label>URL Abiertas</label><input id="o"><div class="grid"><div><label>Programadas (segundos)</label><input id="si" type="number" min="10"></div><div><label>Abiertas (minutos)</label><input id="oi" type="number" min="1"></div></div></div>
 <div class="card"><h3>Horarios</h3><div id="sched"></div><button onclick="addSchedule()">+ AGREGAR HORARIO</button></div>
 <div class="card grid"><div><h3>Exclusiones</h3><textarea id="e"></textarea></div><div><h3>Prioridades</h3><textarea id="p"></textarea></div></div>
-<div class="card"><h3>Sonido</h3><select id="sound"><option value="default">Automático</option></select><button onclick="api.testSound()">PROBAR SONIDO</button></div>
+<div class="card"><h3>Sonido de alerta</h3><p class="muted">Las alertas usan el dispositivo de salida predeterminado de Windows.</p><select id="sound"><option value="default">Dispositivo predeterminado de Windows</option></select><button onclick="api.testSound()">PROBAR SONIDO</button></div>
 <div class="card"><button class="primary" onclick="save()">GUARDAR</button><button onclick="load()">CANCELAR</button><button class="danger" onclick="reset()">RESTAURAR CONFIGURACIÓN ORIGINAL</button></div>
 </main><script>
 let c,days=[['Lunes',1],['Martes',2],['Miércoles',3],['Jueves',4],['Viernes',5],['Sábado',6],['Domingo',7]];
