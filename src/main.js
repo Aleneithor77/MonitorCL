@@ -141,4 +141,5 @@ ipcMain.handle('save-config',(e,c)=>{cfg={...clone(DEFAULTS),...c};if(!String(cf
 ipcMain.handle('reset-config',()=>{cfg=clone(DEFAULTS);saveConfig();restartTimers();return cfg});
 ipcMain.handle('get-status',()=>inSchedule()?'ACTIVO':'EN ESPERA');
 ipcMain.handle('get-last-scans',()=>lastScan);
+ipcMain.handle('get-scan-state',()=>({lastScan,scanErrors,inSchedule:inSchedule(),busy:scanBusy}));
 ipcMain.handle('test-sound',async()=>{playSound(false,true);return true});
