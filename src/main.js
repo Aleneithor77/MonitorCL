@@ -2,7 +2,7 @@ const {app,BrowserWindow,Tray,Menu,nativeImage,ipcMain,Notification}=require('el
 const path=require('path'),fs=require('fs'),{execFile}=require('child_process'),Database=require('better-sqlite3');
 
 const DEFAULTS={
- scheduledUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea?q=Qf1EjOi8GZhR3clJye',
+ scheduledUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea',
  openUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea',
  scheduledInterval:30000,openInterval:3600000,
  schedules:[{days:[1,2,3,4,5],start:'06:00',end:'20:00'},{days:[6],start:'07:00',end:'14:00'}],
@@ -35,7 +35,8 @@ let cfg,db,mainWin,tray,timers=[],isScanning=false,appQuitting=false,alertWins=[
 const dataDir=()=>app.getPath('userData'),configPath=()=>path.join(dataDir(),'config.json');
 const norm=s=>String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^\\p{L}\\p{N}]+/gu,' ').replace(/\\s+/g,' ').trim().toUpperCase();
 const clone=o=>JSON.parse(JSON.stringify(o));
-function loadConfig(){try{cfg={...clone(DEFAULTS),...JSON.parse(fs.readFileSync(configPath(),'utf8'))}}catch{cfg=clone(DEFAULTS);saveConfig()}}
+function cleanScheduledUrl(u){try{const x=new URL(String(u||''));x.searchParams.delete('q');return x.toString()}catch{return String(u||'').replace(/[?&]q=[^&#]*/,'').replace(/[?&]$/,'')}}
+function loadConfig(){try{cfg={...clone(DEFAULTS),...JSON.parse(fs.readFileSync(configPath(),'utf8'))};cfg.scheduledUrl=cleanScheduledUrl(cfg.scheduledUrl)}catch{cfg=clone(DEFAULTS);saveConfig()}}
 function saveConfig(){fs.mkdirSync(dataDir(),{recursive:true});fs.writeFileSync(configPath(),JSON.stringify(cfg,null,2),'utf8')}
 function initDb(){db=new Database(path.join(dataDir(),'monitorcl.db'));db.pragma('journal_mode=WAL');db.exec('CREATE TABLE IF NOT EXISTS records(cl TEXT PRIMARY KEY,detected_at TEXT,source TEXT,modality TEXT,entity TEXT,description TEXT,date_text TEXT,url TEXT,classification TEXT,notified INTEGER DEFAULT 0)')}
 function inSchedule(){const n=new Date(),day=n.getDay()||7,min=n.getHours()*60+n.getMinutes();return (cfg.schedules||[]).some(s=>s.days.includes(day)&&min>=hm(s.start)&&min<hm(s.end))}
@@ -55,15 +56,18 @@ function showAlert(r,high){
  setTimeout(()=>closeAlert(w),high?20000:12000);
  db.prepare('UPDATE records SET notified=1 WHERE cl=?').run(r.cl);
 }
-async function waitForRows(win,timeout=15000){
+async function waitForRows(win,timeout=20000){
  const start=Date.now();
  while(Date.now()-start<timeout){
-  try{const n=await win.webContents.executeJavaScript(`document.querySelectorAll('tr a[href*="solicitud-de-cotizacion"]').length`);if(n>0)return true}catch{}
+  try{
+   const n=await win.webContents.executeJavaScript(`(()=>document.querySelectorAll('a[href*="solicitud-de-cotizacion"],a[routerlink*="solicitud-de-cotizacion"],a[href*="solicitud"],a[routerlink*="solicitud"]').length)()`);
+   if(n>0)return true;
+  }catch{}
   await new Promise(r=>setTimeout(r,500));
  }
  return false;
 }
-async function extract(win){return win.webContents.executeJavaScript(`(()=>Array.from(document.querySelectorAll('tr')).map(tr=>{const a=tr.querySelector('a[href*="solicitud-de-cotizacion"]');if(!a)return null;const c=Array.from(tr.querySelectorAll('td')).map(x=>x.innerText.trim());const table=tr.closest('table');const th=table?[...table.querySelectorAll('thead tr:last-child th')].map(x=>x.innerText.trim()):[];const fields={};c.forEach((v,i)=>{if(th[i])fields[th[i]]=v});return {cl:(a.innerText||'').trim(),url:a.href,c,fields,raw:tr.innerText}}).filter(Boolean))()`)}
+async function extract(win){return win.webContents.executeJavaScript(`(()=>{const links=[...document.querySelectorAll('a[href*="solicitud-de-cotizacion"],a[routerlink*="solicitud-de-cotizacion"],a[href*="solicitud"],a[routerlink*="solicitud"]')];const out=[];const seen=new Set();for(const a of links){const row=a.closest('tr,[role="row"],mat-row,.mat-mdc-row');if(!row)continue;const c=[...row.querySelectorAll('td,[role="cell"],mat-cell,.mat-mdc-cell')].map(x=>(x.innerText||x.textContent||'').trim()).filter(Boolean);const table=row.closest('table');const th=table?[...table.querySelectorAll('thead tr:last-child th')].map(x=>(x.innerText||x.textContent||'').trim()):[];const fields={};c.forEach((v,i)=>{if(th[i])fields[th[i]]=v});const cl=(a.innerText||a.textContent||'').trim();const url=a.href||a.getAttribute('href')||a.getAttribute('routerlink')||'';const key=cl+'|'+url;if(!cl||seen.has(key))continue;seen.add(key);out.push({cl,url,c,fields,raw:row.innerText||row.textContent||''});}return out})()`)}
 
 async function extractAllPages(win,maxPages=50){
  const all=[],seenPages=new Set();
@@ -111,7 +115,7 @@ async function scan(url,source){
   for(let attempt=1;attempt<=3;attempt++){
    try{
     win=new BrowserWindow({show:false,webPreferences:{contextIsolation:true}});
-    await win.loadURL(url,{waitUntil:'domcontentloaded',timeout:30000});
+    const targetUrl=source==='Programadas'?cleanScheduledUrl(url):url;\n    await win.loadURL(targetUrl,{waitUntil:'domcontentloaded',timeout:30000});
     if(!await waitForRows(win,15000))throw new Error('Sin cotizaciones visibles tras cargar la página');
     const rows=await extractAllPages(win),seen=new Set();
     for(const r of rows){
@@ -140,7 +144,7 @@ app.on('second-instance',()=>openWindow());
 app.on('before-quit',()=>{appQuitting=true;timers.forEach(clearInterval);alertWins.forEach(closeAlert)});
 app.whenReady().then(()=>{if(!app.requestSingleInstanceLock())return app.quit();if(process.platform==='win32')app.setLoginItemSettings({openAtLogin:true,path:process.execPath,args:['--hidden']});loadConfig();initDb();mainWin=new BrowserWindow({width:920,height:760,show:false,title:'MONITOR CL 👀',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true}});mainWin.loadFile(path.join(__dirname,'index.html'));mainWin.on('close',e=>{if(!appQuitting){e.preventDefault();mainWin.hide()}});tray=new Tray(icon());tray.setToolTip('MONITOR CL 👀');tray.on('double-click',openWindow);trayMenu();restartTimers();if(!process.argv.includes('--hidden'))mainWin.show();});
 ipcMain.handle('get-config',()=>cfg);
-ipcMain.handle('save-config',(e,c)=>{cfg={...clone(DEFAULTS),...c};saveConfig();restartTimers();return cfg});
+ipcMain.handle('save-config',(e,c)=>{cfg={...clone(DEFAULTS),...c};cfg.scheduledUrl=cleanScheduledUrl(cfg.scheduledUrl);saveConfig();restartTimers();return cfg});
 ipcMain.handle('reset-config',()=>{cfg=clone(DEFAULTS);saveConfig();restartTimers();return cfg});
 ipcMain.handle('get-status',()=>inSchedule()?'ACTIVO':'EN ESPERA');
-ipcMain.handle('test-sound',async()=>{if(process.platform==='win32'){await new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command','[System.Media.SystemSounds]::Exclamation.Play(); Start-Sleep -Milliseconds 900'],{windowsHide:true},()=>resolve()));}else{new Notification({title:'MONITOR CL 👀',body:'Prueba de sonido',silent:false}).show()}return true});
+ipcMain.handle('test-sound',async()=>{if(process.platform==='win32'){await new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command','for($i=0;$i -lt 3;$i++){[System.Media.SystemSounds]::Exclamation.Play();Start-Sleep -Milliseconds 350}'],{windowsHide:true},()=>resolve()));}else{new Notification({title:'MONITOR CL 👀',body:'Prueba de sonido',silent:false}).show()}return true});
