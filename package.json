@@ -1,13 +1,14 @@
 {
   "name": "monitor-cl",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MONITOR CL - Monitor de Cotizaciones PanamaCompra",
   "main": "src/main.js",
   "author": "Monitor CL",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win nsis"
+    "dist": "electron-builder --win nsis",
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0"
