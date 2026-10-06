@@ -1,0 +1,34 @@
+{
+  "name": "monitor-cl",
+  "version": "0.1.0",
+  "description": "MONITOR CL - Monitor de Cotizaciones PanamaCompra",
+  "main": "src/main.js",
+  "author": "Monitor CL",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "pa.monitorcl.app",
+    "productName": "Monitor CL",
+    "artifactName": "MonitorCL_Setup.exe",
+    "directories": { "output": "dist" },
+    "files": ["src/**/*", "package.json"],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Monitor CL 👀"
+    }
+  }
+}
