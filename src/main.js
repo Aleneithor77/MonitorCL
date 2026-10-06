@@ -63,7 +63,7 @@ async function waitForRows(page,timeout=20000){
  const start=Date.now();
  while(Date.now()-start<timeout){
   try{
-   const n=await page.locator('tr,[role="row"],mat-row,.mat-mdc-row').evaluateAll(rows=>rows.filter(r=>/\b\d{4}-\d{1,2}-\d{1,2}-\d{1,2}-CL-\d+\b/i.test(r.innerText||'')).length);
+   const n=await page.locator('tr,[role="row"],mat-row,.mat-mdc-row').evaluateAll(rows=>rows.filter(r=>/\b\d{4}(?:-\d{1,2}){4}-CL-\d+\b/i.test(r.innerText||'')).length);
    if(n>0)return true;
   }catch{}
   await page.waitForTimeout(500);
@@ -71,7 +71,7 @@ async function waitForRows(page,timeout=20000){
  return false;
 }
 async function extract(page){
- return page.evaluate(()=>{const rows=[...document.querySelectorAll('tr,[role="row"],mat-row,.mat-mdc-row')];const out=[];const seen=new Set();for(const row of rows){const raw=(row.innerText||row.textContent||'').trim();const m=raw.match(/\b\d{4}-\d{1,2}-\d{1,2}-\d{1,2}-CL-\d+\b/i);if(!m)continue;const c=[...row.querySelectorAll('td,[role="cell"],mat-cell,.mat-mdc-cell')].map(x=>(x.innerText||x.textContent||'').trim()).filter(Boolean);const table=row.closest('table');const th=table?[...table.querySelectorAll('thead tr:last-child th')].map(x=>(x.innerText||x.textContent||'').trim()):[];const fields={};c.forEach((v,i)=>{if(th[i])fields[th[i]]=v});const a=row.querySelector('a[href],a[routerlink]');const url=a?(a.href||a.getAttribute('href')||a.getAttribute('routerlink')||''):'';const cl=m[0];const key=cl+'|'+url;if(seen.has(key))continue;seen.add(key);out.push({cl,url,c,fields,raw});}return out});
+ return page.evaluate(()=>{const rows=[...document.querySelectorAll('tr,[role="row"],mat-row,.mat-mdc-row')];const out=[];const seen=new Set();for(const row of rows){const raw=(row.innerText||row.textContent||'').trim();const m=raw.match(/\b\d{4}(?:-\d{1,2}){4}-CL-\d+\b/i);if(!m)continue;const c=[...row.querySelectorAll('td,[role="cell"],mat-cell,.mat-mdc-cell')].map(x=>(x.innerText||x.textContent||'').trim()).filter(Boolean);const table=row.closest('table');const th=table?[...table.querySelectorAll('thead tr:last-child th')].map(x=>(x.innerText||x.textContent||'').trim()):[];const fields={};c.forEach((v,i)=>{if(th[i])fields[th[i]]=v});const a=row.querySelector('a[href],a[routerlink]');const url=a?(a.href||a.getAttribute('href')||a.getAttribute('routerlink')||''):'';const cl=m[0];const key=cl+'|'+url;if(seen.has(key))continue;seen.add(key);out.push({cl,url,c,fields,raw});}return out});
 }
 async function extractAllPages(page,maxPages=50){
  const all=[],seenPages=new Set();
