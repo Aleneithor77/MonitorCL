@@ -1,5 +1,5 @@
 const {app,BrowserWindow,Tray,Menu,nativeImage,ipcMain,Notification}=require('electron');
-const path=require('path'),fs=require('fs'),Database=require('better-sqlite3');
+const path=require('path'),fs=require('fs'),{execFile}=require('child_process'),Database=require('better-sqlite3');
 
 const DEFAULTS={
  scheduledUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea?q=Qf1EjOi8GZhR3clJye',
@@ -132,15 +132,15 @@ async function scan(url,source){
  }finally{isScanning=false}
 }
 function restartTimers(){timers.forEach(clearInterval);timers=[];if(cfg.scheduledInterval>0)timers.push(setInterval(()=>scan(cfg.scheduledUrl,'Programadas'),cfg.scheduledInterval));if(cfg.openInterval>0)timers.push(setInterval(()=>scan(cfg.openUrl,'Abiertas'),cfg.openInterval));scan(cfg.scheduledUrl,'Programadas')}
-function icon(){return nativeImage.createFromBuffer(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAQAAAC1+jfqAAAAC0lEQVR42mNkYGD4DwABBAEAHjOcWQAAAABJRU5ErkJggg==','base64'))}
+function icon(){return nativeImage.createFromBuffer(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAsUlEQVR4nO2VSw6AIAwFkZNoohu9/1F0o4neRLcE6OeJMST0LbUwA0h1zmKxtJ4OHdCP8y3VXMemnldVqIG+lWFfUuBzX8kxw7RAIqRADs6BNSI5iaxADEfAkkgskQgg8HBy5FhCCc/BucSTUmefS8jxXCG1KgpGPed2hxX4I3ULoFuKHlkigLTQGIZc1ZBTXx+gJFCRok7ISUgin/0LNCKaSN+VeA1L4JrxdfcBi6WJPKt2XPc3yLdwAAAAAElFTkSuQmCC','base64'))}
 function openWindow(){mainWin.show();mainWin.focus()}
 function listWindow(title,sql){const rows=db.prepare(sql).all();const w=new BrowserWindow({width:760,height:520,show:true,title,webPreferences:{contextIsolation:true}});const esc=s=>String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));w.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent('<style>body{font:14px Segoe UI;padding:20px}h2{margin-top:0}.r{padding:12px 0;border-bottom:1px solid #ddd}button{padding:8px 16px}</style><h2>'+esc(title)+'</h2>'+rows.map(r=>'<div class="r"><b>'+esc(r.cl)+'</b><br>'+esc(r.entity)+'<br>'+esc(r.description)+'<br>'+esc(r.date_text)+'</div>').join('')+'<br><button onclick="window.close()">Cerrar</button>'))}
 function trayMenu(){tray.setContextMenu(Menu.buildFromTemplate([{label:'Registros nuevos — últimos 30 minutos',click:()=>listWindow('Registros nuevos — últimos 30 minutos',"SELECT * FROM records WHERE detected_at>=datetime('now','-30 minutes') ORDER BY detected_at DESC")},{label:'Alta prioridad — últimos 20 minutos',click:()=>listWindow('Alta prioridad — últimos 20 minutos',"SELECT * FROM records WHERE classification='ALTA' AND detected_at>=datetime('now','-20 minutes') ORDER BY detected_at DESC")},{type:'separator'},{label:'Configuración',click:openWindow},{label:'Cerrar Monitor CL',click:()=>{appQuitting=true;app.quit()}}]))}
 app.on('second-instance',()=>openWindow());
 app.on('before-quit',()=>{appQuitting=true;timers.forEach(clearInterval);alertWins.forEach(closeAlert)});
-app.whenReady().then(()=>{if(!app.requestSingleInstanceLock())return app.quit();if(process.platform==='win32')app.setLoginItemSettings({openAtLogin:true,path:process.execPath,args:['--hidden']});loadConfig();initDb();mainWin=new BrowserWindow({width:920,height:760,show:false,title:'MONITOR CL 👀',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true}});mainWin.loadFile(path.join(__dirname,'index.html'));mainWin.on('close',e=>{if(!appQuitting){e.preventDefault();mainWin.hide()}});tray=new Tray(icon());tray.setToolTip('MONITOR CL 👀');trayMenu();restartTimers();if(!process.argv.includes('--hidden'))mainWin.show();});
+app.whenReady().then(()=>{if(!app.requestSingleInstanceLock())return app.quit();if(process.platform==='win32')app.setLoginItemSettings({openAtLogin:true,path:process.execPath,args:['--hidden']});loadConfig();initDb();mainWin=new BrowserWindow({width:920,height:760,show:false,title:'MONITOR CL 👀',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true}});mainWin.loadFile(path.join(__dirname,'index.html'));mainWin.on('close',e=>{if(!appQuitting){e.preventDefault();mainWin.hide()}});tray=new Tray(icon());tray.setToolTip('MONITOR CL 👀');tray.on('double-click',openWindow);trayMenu();restartTimers();if(!process.argv.includes('--hidden'))mainWin.show();});
 ipcMain.handle('get-config',()=>cfg);
 ipcMain.handle('save-config',(e,c)=>{cfg={...clone(DEFAULTS),...c};saveConfig();restartTimers();return cfg});
 ipcMain.handle('reset-config',()=>{cfg=clone(DEFAULTS);saveConfig();restartTimers();return cfg});
 ipcMain.handle('get-status',()=>inSchedule()?'ACTIVO':'EN ESPERA');
-ipcMain.handle('test-sound',()=>{new Notification({title:'MONITOR CL 👀',body:'Prueba de sonido — salida predeterminada de Windows',silent:false}).show();return true});
+ipcMain.handle('test-sound',async()=>{if(process.platform==='win32'){await new Promise(resolve=>execFile('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-Command','[System.Media.SystemSounds]::Exclamation.Play(); Start-Sleep -Milliseconds 900'],{windowsHide:true},()=>resolve()));}else{new Notification({title:'MONITOR CL 👀',body:'Prueba de sonido',silent:false}).show()}return true});
