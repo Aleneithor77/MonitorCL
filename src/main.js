@@ -63,7 +63,9 @@ async function waitForRows(win,timeout=15000){
  }
  return false;
 }
-async function extract(win){return win.webContents.executeJavaScript(`(()=>Array.from(document.querySelectorAll('tr')).map(tr=>{const a=tr.querySelector('a[href*="solicitud-de-cotizacion"]');if(!a)return null;const c=Array.from(tr.querySelectorAll('td')).map(x=>x.innerText.trim());return {cl:(a.innerText||'').trim(),url:a.href,c,raw:tr.innerText}}).filter(Boolean))()`)}
+async function extract(win){return win.webContents.executeJavaScript(`(()=>Array.from(document.querySelectorAll('tr')).map(tr=>{const a=tr.querySelector('a[href*="solicitud-de-cotizacion"]');if(!a)return null;const c=Array.from(tr.querySelectorAll('td')).map(x=>x.innerText.trim());const table=tr.closest('table');const th=table?[...table.querySelectorAll('thead tr:last-child th')].map(x=>x.innerText.trim()):[];const fields={};c.forEach((v,i)=>{if(th[i])fields[th[i]]=v});return {cl:(a.innerText||'').trim(),url:a.href,c,fields,raw:tr.innerText}}).filter(Boolean))()`)}
+function pickField(r,patterns,fallback=''){const hit=Object.entries(r.fields||{}).find(([k])=>patterns.some(p=>norm(k).includes(norm(p))));return hit?hit[1]:fallback}
+function dateField(r){const byHeader=pickField(r,['FECHA','DATE','PUBLICACION','PUBLICACIÓN']);if(byHeader)return byHeader;return (r.c||[]).find(x=>/\\b\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}\\b/.test(x))||''}
 function modalityFrom(c,raw){
  const direct=c.find(x=>/^Global$/i.test(x)||/^Rengl[oó]n$/i.test(x));
  if(direct)return direct;
@@ -85,7 +87,7 @@ async function scan(url,source){
      seen.add(r.cl);
      const mod=modalityFrom(r.c,r.raw);
      const cls=classify(r.raw,mod);
-     const rec={cl:r.cl,detected_at:new Date().toISOString(),source,modality:mod,entity:r.c[3]||'',description:r.c[2]||r.raw,date_text:r.c[5]||'',url:r.url,classification:cls};
+     const entity=pickField(r,['ENTIDAD','INSTITUCION','INSTITUCIÓN','ORGANIZACION','ORGANIZACIÓN'],r.c[3]||'');const description=pickField(r,['DESCRIPCION','DESCRIPCIÓN','OBJETO','DETALLE','SOLICITUD'],r.c[2]||r.raw);const date=dateField(r);const rec={cl:r.cl,detected_at:new Date().toISOString(),source,modality:mod,entity,description,date_text:date,url:r.url,classification:cls};
      db.prepare('INSERT INTO records VALUES(@cl,@detected_at,@source,@modality,@entity,@description,@date_text,@url,@classification,0)').run(rec);
      if(cls)showAlert({cl:r.cl,entity:rec.entity,description:rec.description,date:rec.date_text},cls==='ALTA');
     }
