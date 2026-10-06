@@ -31,7 +31,7 @@ const DEFAULTS={
  'UPS','NO BREAK','NOBREAK','REGULADOR','REGULADORES'
  ]};
 
-let cfg,db,mainWin,tray,timers=[],scanBusy={Programadas:false,Abiertas:false},appQuitting=false,alertWins=[],lastScan={Programadas:null,Abiertas:null};
+let cfg,db,mainWin,tray,timers=[],scanBusy={Programadas:false,Abiertas:false},appQuitting=false,alertWins=[],lastScan={Programadas:null,Abiertas:null},scanErrors={Programadas:null,Abiertas:null},soundQueue=Promise.resolve();
 const dataDir=()=>app.getPath('userData'),configPath=()=>path.join(dataDir(),'config.json');
 const norm=s=>String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^\\p{L}\\p{N}]+/gu,' ').replace(/\\s+/g,' ').trim().toUpperCase();
 const clone=o=>JSON.parse(JSON.stringify(o));
@@ -71,7 +71,7 @@ async function waitForRows(page,timeout=20000){
  return false;
 }
 async function extract(page){
- return page.evaluate(()=>{const links=[...document.querySelectorAll('a[href*="solicitud-de-cotizacion"],a[routerlink*="solicitud-de-cotizacion"],a[href*="solicitud"],a[routerlink*="solicitud"]')];const out=[];const seen=new Set();for(const a of links){const row=a.closest('tr,[role="row"],mat-row,.mat-mdc-row');if(!row)continue;const c=[...row.querySelectorAll('td,[role="cell"],mat-cell,.mat-mdc-cell')].map(x=>(x.innerText||x.textContent||'').trim()).filter(Boolean);const table=row.closest('table');const th=table?[...table.querySelectorAll('thead tr:last-child th')].map(x=>(x.innerText||x.textContent||'').trim()):[];const fields={};c.forEach((v,i)=>{if(th[i])fields[th[i]]=v});const cl=(a.innerText||a.textContent||'').trim();const url=a.href||a.getAttribute('href')||a.getAttribute('routerlink')||'';const key=cl+'|'+url;if(!cl||seen.has(key))continue;seen.add(key);out.push({cl,url,c,fields,raw:row.innerText||row.textContent||''});}return out});
+ return page.evaluate(()=>{const rows=[...document.querySelectorAll('tr,[role="row"],mat-row,.mat-mdc-row')];const out=[];const seen=new Set();for(const row of rows){const raw=(row.innerText||row.textContent||'').trim();const m=raw.match(/\\b\\d{4}-\\d{1,2}-\\d{1,2}-\\d{1,2}-CL-\\d+\\b/i);if(!m)continue;const c=[...row.querySelectorAll('td,[role="cell"],mat-cell,.mat-mdc-cell')].map(x=>(x.innerText||x.textContent||'').trim()).filter(Boolean);const table=row.closest('table');const th=table?[...table.querySelectorAll('thead tr:last-child th')].map(x=>(x.innerText||x.textContent||'').trim()):[];const fields={};c.forEach((v,i)=>{if(th[i])fields[th[i]]=v});const a=row.querySelector('a[href],a[routerlink]');const url=a?(a.href||a.getAttribute('href')||a.getAttribute('routerlink')||''):'';const cl=m[0];const key=cl+'|'+url;if(seen.has(key))continue;seen.add(key);out.push({cl,url,c,fields,raw});}return out});
 }
 async function extractAllPages(page,maxPages=50){
  const all=[],seenPages=new Set();
@@ -117,8 +117,10 @@ async function scan(url,source){
      if(cls)showAlert({cl:r.cl,entity:rec.entity,description:rec.description,date:rec.date_text},cls==='ALTA');
     }
     lastScan[source]=new Date().toISOString();
+    scanErrors[source]=null;
     return;
    }catch(err){
+    scanErrors[source]=String(err?.message||err);
     console.error('MONITOR CL: fallo de captura',source,'intento',attempt,err?.message||err);
     if(attempt<3)await new Promise(r=>setTimeout(r,1000*attempt));
    }
