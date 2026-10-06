@@ -64,6 +64,38 @@ async function waitForRows(win,timeout=15000){
  return false;
 }
 async function extract(win){return win.webContents.executeJavaScript(`(()=>Array.from(document.querySelectorAll('tr')).map(tr=>{const a=tr.querySelector('a[href*="solicitud-de-cotizacion"]');if(!a)return null;const c=Array.from(tr.querySelectorAll('td')).map(x=>x.innerText.trim());const table=tr.closest('table');const th=table?[...table.querySelectorAll('thead tr:last-child th')].map(x=>x.innerText.trim()):[];const fields={};c.forEach((v,i)=>{if(th[i])fields[th[i]]=v});return {cl:(a.innerText||'').trim(),url:a.href,c,fields,raw:tr.innerText}}).filter(Boolean))()`)}
+
+async function extractAllPages(win,maxPages=50){
+ const all=[],seenPages=new Set();
+ for(let page=0;page<maxPages;page++){
+  const rows=await extract(win);
+  const signature=rows.map(r=>r.cl).join('|');
+  if(!signature||seenPages.has(signature))break;
+  seenPages.add(signature); all.push(...rows);
+  const changed=await win.webContents.executeJavaScript(`(()=>{
+   const visible=e=>{if(!e)return false;const s=getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0};
+   const disabled=e=>e.disabled||e.getAttribute('aria-disabled')==='true'||e.classList.contains('disabled')||e.classList.contains('mat-button-disabled');
+   const els=[...document.querySelectorAll('button,a,[role="button"]')];
+   const next=els.find(e=>visible(e)&&!disabled(e)&&(
+     /siguiente|next/i.test(e.getAttribute('aria-label')||'')||
+     /siguiente|next/i.test(e.getAttribute('title')||'')||
+     /^(>|»|›|→)$/i.test((e.innerText||'').trim())
+   ));
+   if(!next)return false;
+   next.click(); return true;
+  })()`);
+  if(!changed)break;
+  const before=signature;
+  const start=Date.now();
+  while(Date.now()-start<10000){
+   await new Promise(r=>setTimeout(r,400));
+   const current=await extract(win);
+   const sig=current.map(r=>r.cl).join('|');
+   if(sig&&sig!==before)break;
+  }
+ }
+ return all;
+}
 function pickField(r,patterns,fallback=''){const hit=Object.entries(r.fields||{}).find(([k])=>patterns.some(p=>norm(k).includes(norm(p))));return hit?hit[1]:fallback}
 function dateField(r){const byHeader=pickField(r,['FECHA','DATE','PUBLICACION','PUBLICACIÓN']);if(byHeader)return byHeader;return (r.c||[]).find(x=>/\\b\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}\\b/.test(x))||''}
 function modalityFrom(c,raw){
@@ -81,7 +113,7 @@ async function scan(url,source){
     win=new BrowserWindow({show:false,webPreferences:{contextIsolation:true}});
     await win.loadURL(url,{waitUntil:'domcontentloaded',timeout:30000});
     if(!await waitForRows(win,15000))throw new Error('Sin cotizaciones visibles tras cargar la página');
-    const rows=await extract(win),seen=new Set();
+    const rows=await extractAllPages(win),seen=new Set();
     for(const r of rows){
      if(!r.cl||seen.has(r.cl)||db.prepare('SELECT 1 FROM records WHERE cl=?').get(r.cl))continue;
      seen.add(r.cl);
