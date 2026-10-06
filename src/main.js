@@ -5,7 +5,7 @@ const DEFAULTS={
  scheduledUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea?q=Qf1EjOi8GZhR3clJye',
  openUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea?q=9hjOi8GZhR3clJye',
  scheduledInterval:30000,openInterval:3600000,
- schedules:[{days:[1,2,3,4,5],start:'06:00',end:'20:00'},{days:[6],start:'07:00',end:'14:00'}],
+ schedules:[{days:[1,2,3,4,5],start:'06:00',end:'23:00'},{days:[6],start:'07:00',end:'21:00'}],
  soundDevice:'default',
  exclusions:[
  'ABRIGOS','Compra de brindis','guantes de nitrilo','termómetro','Compra de alimentos','compra de logo','con logo',
