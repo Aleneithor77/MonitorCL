@@ -1,5 +1,5 @@
 const {app,BrowserWindow,Tray,Menu,nativeImage,ipcMain,Notification}=require('electron');
-const path=require('path'),fs=require('fs'),{execFile}=require('child_process'),Database=require('better-sqlite3');
+const path=require('path'),fs=require('fs'),{execFile}=require('child_process'),Database=require('better-sqlite3'),{chromium}=require('playwright');
 
 const DEFAULTS={
  scheduledUrl:'https://www.panamacompra.gob.pa/Inicio/#/cotizaciones-en-linea/cotizaciones-en-linea?q=Qf1EjOi8GZhR3clJye',
@@ -31,7 +31,7 @@ const DEFAULTS={
  'UPS','NO BREAK','NOBREAK','REGULADOR','REGULADORES'
  ]};
 
-let cfg,db,mainWin,tray,timers=[],isScanning=false,appQuitting=false,alertWins=[];
+let cfg,db,mainWin,tray,timers=[],scanBusy=false,appQuitting=false,alertWins=[],lastScan={Programadas:null,Abiertas:null};
 const dataDir=()=>app.getPath('userData'),configPath=()=>path.join(dataDir(),'config.json');
 const norm=s=>String(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').replace(/[^\\p{L}\\p{N}]+/gu,' ').replace(/\\s+/g,' ').trim().toUpperCase();
 const clone=o=>JSON.parse(JSON.stringify(o));
@@ -59,86 +59,74 @@ function showAlert(r,high){
  setTimeout(()=>closeAlert(w),high?20000:12000);
  db.prepare('UPDATE records SET notified=1 WHERE cl=?').run(r.cl);
 }
-async function waitForRows(win,timeout=20000){
+async function waitForRows(page,timeout=20000){
  const start=Date.now();
  while(Date.now()-start<timeout){
   try{
-   const n=await win.webContents.executeJavaScript(`(()=>document.querySelectorAll('a[href*="solicitud-de-cotizacion"],a[routerlink*="solicitud-de-cotizacion"],a[href*="solicitud"],a[routerlink*="solicitud"]').length)()`);
+   const n=await page.locator('a[href*="solicitud-de-cotizacion"],a[routerlink*="solicitud-de-cotizacion"],a[href*="solicitud"],a[routerlink*="solicitud"]').count();
    if(n>0)return true;
   }catch{}
-  await new Promise(r=>setTimeout(r,500));
+  await page.waitForTimeout(500);
  }
  return false;
 }
-async function extract(win){return win.webContents.executeJavaScript(`(()=>{const links=[...document.querySelectorAll('a[href*="solicitud-de-cotizacion"],a[routerlink*="solicitud-de-cotizacion"],a[href*="solicitud"],a[routerlink*="solicitud"]')];const out=[];const seen=new Set();for(const a of links){const row=a.closest('tr,[role="row"],mat-row,.mat-mdc-row');if(!row)continue;const c=[...row.querySelectorAll('td,[role="cell"],mat-cell,.mat-mdc-cell')].map(x=>(x.innerText||x.textContent||'').trim()).filter(Boolean);const table=row.closest('table');const th=table?[...table.querySelectorAll('thead tr:last-child th')].map(x=>(x.innerText||x.textContent||'').trim()):[];const fields={};c.forEach((v,i)=>{if(th[i])fields[th[i]]=v});const cl=(a.innerText||a.textContent||'').trim();const url=a.href||a.getAttribute('href')||a.getAttribute('routerlink')||'';const key=cl+'|'+url;if(!cl||seen.has(key))continue;seen.add(key);out.push({cl,url,c,fields,raw:row.innerText||row.textContent||''});}return out})()`)}
-
-async function extractAllPages(win,maxPages=50){
+async function extract(page){
+ return page.evaluate(()=>{const links=[...document.querySelectorAll('a[href*="solicitud-de-cotizacion"],a[routerlink*="solicitud-de-cotizacion"],a[href*="solicitud"],a[routerlink*="solicitud"]')];const out=[];const seen=new Set();for(const a of links){const row=a.closest('tr,[role="row"],mat-row,.mat-mdc-row');if(!row)continue;const c=[...row.querySelectorAll('td,[role="cell"],mat-cell,.mat-mdc-cell')].map(x=>(x.innerText||x.textContent||'').trim()).filter(Boolean);const table=row.closest('table');const th=table?[...table.querySelectorAll('thead tr:last-child th')].map(x=>(x.innerText||x.textContent||'').trim()):[];const fields={};c.forEach((v,i)=>{if(th[i])fields[th[i]]=v});const cl=(a.innerText||a.textContent||'').trim();const url=a.href||a.getAttribute('href')||a.getAttribute('routerlink')||'';const key=cl+'|'+url;if(!cl||seen.has(key))continue;seen.add(key);out.push({cl,url,c,fields,raw:row.innerText||row.textContent||''});}return out});
+}
+async function extractAllPages(page,maxPages=50){
  const all=[],seenPages=new Set();
- for(let page=0;page<maxPages;page++){
-  const rows=await extract(win);
+ for(let pageNo=0;pageNo<maxPages;pageNo++){
+  const rows=await extract(page);
   const signature=rows.map(r=>r.cl).join('|');
   if(!signature||seenPages.has(signature))break;
   seenPages.add(signature); all.push(...rows);
-  const changed=await win.webContents.executeJavaScript(`(()=>{
-   const visible=e=>{if(!e)return false;const s=getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0};
-   const disabled=e=>e.disabled||e.getAttribute('aria-disabled')==='true'||e.classList.contains('disabled')||e.classList.contains('mat-button-disabled');
-   const els=[...document.querySelectorAll('button,a,[role="button"]')];
-   const next=els.find(e=>visible(e)&&!disabled(e)&&(
-     /siguiente|next/i.test(e.getAttribute('aria-label')||'')||
-     /siguiente|next/i.test(e.getAttribute('title')||'')||
-     /^(>|»|›|→)$/i.test((e.innerText||'').trim())
-   ));
-   if(!next)return false;
-   next.click(); return true;
-  })()`);
+  const changed=await page.evaluate(()=>{const visible=e=>{if(!e)return false;const s=getComputedStyle(e),r=e.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&r.width>0&&r.height>0};const disabled=e=>e.disabled||e.getAttribute('aria-disabled')==='true'||e.classList.contains('disabled')||e.classList.contains('mat-button-disabled');const els=[...document.querySelectorAll('button,a,[role="button"]')];const next=els.find(e=>visible(e)&&!disabled(e)&&(/siguiente|next/i.test(e.getAttribute('aria-label')||'')||/siguiente|next/i.test(e.getAttribute('title')||'')||/^(>|»|›|→)$/i.test((e.innerText||'').trim())));if(!next)return false;next.click();return true;});
   if(!changed)break;
-  const before=signature;
-  const start=Date.now();
-  while(Date.now()-start<10000){
-   await new Promise(r=>setTimeout(r,400));
-   const current=await extract(win);
-   const sig=current.map(r=>r.cl).join('|');
-   if(sig&&sig!==before)break;
-  }
+  const before=signature;const start=Date.now();
+  while(Date.now()-start<10000){await page.waitForTimeout(400);const current=await extract(page);const sig=current.map(r=>r.cl).join('|');if(sig&&sig!==before)break;}
  }
  return all;
 }
 function pickField(r,patterns,fallback=''){const hit=Object.entries(r.fields||{}).find(([k])=>patterns.some(p=>norm(k).includes(norm(p))));return hit?hit[1]:fallback}
-function dateField(r){const byHeader=pickField(r,['FECHA','DATE','PUBLICACION','PUBLICACIÓN']);if(byHeader)return byHeader;return (r.c||[]).find(x=>/\\b\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}\\b/.test(x))||''}
-function modalityFrom(c,raw){
- const direct=c.find(x=>/^Global$/i.test(x)||/^Rengl[oó]n$/i.test(x));
- if(direct)return direct;
- const m=String(raw||'').match(/\b(Global|Rengl[oó]n)\b/i);
- return m?m[1]:'';
-}
+function dateField(r){const byHeader=pickField(r,['FECHA','DATE','PUBLICACION','PUBLICACIÓN']);if(byHeader)return byHeader;return (r.c||[]).find(x=>/\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/.test(x))||''}
+function modalityFrom(c,raw){const direct=c.find(x=>/^Global$/i.test(x)||/^Rengl[oó]n$/i.test(x));if(direct)return direct;const m=String(raw||'').match(/\b(Global|Rengl[oó]n)\b/i);return m?m[1]:''}
 async function scan(url,source){
- if(!inSchedule()||isScanning)return;
- isScanning=true; let win=null;
+ if(!inSchedule()||scanBusy)return;
+ scanBusy=true;
+ let browser=null;
  try{
+  browser=await chromium.launch({headless:true});
+  const context=await browser.newContext({ignoreHTTPSErrors:true});
+  const page=await context.newPage();
+  page.setDefaultTimeout(15000);
   for(let attempt=1;attempt<=3;attempt++){
    try{
-    win=new BrowserWindow({show:false,webPreferences:{contextIsolation:true}});
-    await win.loadURL(url,{waitUntil:'domcontentloaded',timeout:30000});
-    if(!await waitForRows(win,20000))throw new Error('Sin cotizaciones visibles tras cargar la página');
-    const rows=await extractAllPages(win),seen=new Set();
+    await page.goto(url,{waitUntil:'domcontentloaded',timeout:30000});
+    await page.waitForLoadState('networkidle',{timeout:10000}).catch(()=>{});
+    if(!await waitForRows(page,20000))throw new Error('Sin cotizaciones visibles tras cargar la página');
+    const rows=await extractAllPages(page),seen=new Set();
     for(const r of rows){
      if(!r.cl||seen.has(r.cl)||db.prepare('SELECT 1 FROM records WHERE cl=?').get(r.cl))continue;
      seen.add(r.cl);
-     const mod=modalityFrom(r.c,r.raw);
-     const cls=classify(r.raw,mod);
-     const entity=pickField(r,['ENTIDAD','INSTITUCION','INSTITUCIÓN','ORGANIZACION','ORGANIZACIÓN'],r.c[3]||'');const description=pickField(r,['DESCRIPCION','DESCRIPCIÓN','OBJETO','DETALLE','SOLICITUD'],r.c[2]||r.raw);const date=dateField(r);const rec={cl:r.cl,detected_at:new Date().toISOString(),source,modality:mod,entity,description,date_text:date,url:r.url,classification:cls};
+     const mod=modalityFrom(r.c,r.raw),cls=classify(r.raw,mod);
+     const entity=pickField(r,['ENTIDAD','INSTITUCION','INSTITUCIÓN','ORGANIZACION','ORGANIZACIÓN'],r.c[3]||'');
+     const description=pickField(r,['DESCRIPCION','DESCRIPCIÓN','OBJETO','DETALLE','SOLICITUD'],r.c[2]||r.raw);
+     const date=dateField(r);
+     const rec={cl:r.cl,detected_at:new Date().toISOString(),source,modality:mod,entity,description,date_text:date,url:r.url,classification:cls};
      db.prepare('INSERT INTO records VALUES(@cl,@detected_at,@source,@modality,@entity,@description,@date_text,@url,@classification,0)').run(rec);
      if(cls)showAlert({cl:r.cl,entity:rec.entity,description:rec.description,date:rec.date_text},cls==='ALTA');
     }
+    lastScan[source]=new Date().toISOString();
     return;
    }catch(err){
-    if(attempt===3)console.error('MONITOR CL: fallo de captura',source,err?.message||err);
-    await new Promise(r=>setTimeout(r,1000*attempt));
-   }finally{if(win){try{win.destroy()}catch{}win=null}}
+    console.error('MONITOR CL: fallo de captura',source,'intento',attempt,err?.message||err);
+    if(attempt<3)await new Promise(r=>setTimeout(r,1000*attempt));
+   }
   }
- }finally{isScanning=false}
+ }catch(err){console.error('MONITOR CL: Playwright no pudo iniciar',err?.message||err)}
+ finally{scanBusy=false;if(browser){try{await browser.close()}catch{}}}
 }
-function restartTimers(){timers.forEach(clearInterval);timers=[];if(cfg.scheduledInterval>0)timers.push(setInterval(()=>scan(cfg.scheduledUrl,'Programadas'),cfg.scheduledInterval));if(cfg.openInterval>0)timers.push(setInterval(()=>scan(cfg.openUrl,'Abiertas'),cfg.openInterval));scan(cfg.scheduledUrl,'Programadas')}
+function restartTimers(){timers.forEach(clearInterval);timers=[];if(cfg.scheduledInterval>0)timers.push(setInterval(()=>scan(cfg.scheduledUrl,'Programadas'),cfg.scheduledInterval));if(cfg.openInterval>0)timers.push(setInterval(()=>scan(cfg.openUrl,'Abiertas'),cfg.openInterval));if(inSchedule()){scan(cfg.scheduledUrl,'Programadas');scan(cfg.openUrl,'Abiertas');}}
 function icon(){return nativeImage.createFromBuffer(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAsUlEQVR4nO2VSw6AIAwFkZNoohu9/1F0o4neRLcE6OeJMST0LbUwA0h1zmKxtJ4OHdCP8y3VXMemnldVqIG+lWFfUuBzX8kxw7RAIqRADs6BNSI5iaxADEfAkkgskQgg8HBy5FhCCc/BucSTUmefS8jxXCG1KgpGPed2hxX4I3ULoFuKHlkigLTQGIZc1ZBTXx+gJFCRok7ISUgin/0LNCKaSN+VeA1L4JrxdfcBi6WJPKt2XPc3yLdwAAAAAElFTkSuQmCC','base64'))}
 function openWindow(){mainWin.show();mainWin.focus()}
 function listWindow(title,sql){const rows=db.prepare(sql).all();const w=new BrowserWindow({width:760,height:520,show:true,title,webPreferences:{contextIsolation:true}});const esc=s=>String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));w.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent('<style>body{font:14px Segoe UI;padding:20px}h2{margin-top:0}.r{padding:12px 0;border-bottom:1px solid #ddd}button{padding:8px 16px}</style><h2>'+esc(title)+'</h2>'+rows.map(r=>'<div class="r"><b>'+esc(r.cl)+'</b><br>'+esc(r.entity)+'<br>'+esc(r.description)+'<br>'+esc(r.date_text)+'</div>').join('')+'<br><button onclick="window.close()">Cerrar</button>'))}
@@ -150,4 +138,5 @@ ipcMain.handle('get-config',()=>cfg);
 ipcMain.handle('save-config',(e,c)=>{cfg={...clone(DEFAULTS),...c};if(!String(cfg.scheduledUrl||'').includes('?q='))cfg.scheduledUrl=DEFAULTS.scheduledUrl;if(!String(cfg.openUrl||'').includes('?q='))cfg.openUrl=DEFAULTS.openUrl;saveConfig();restartTimers();return cfg});
 ipcMain.handle('reset-config',()=>{cfg=clone(DEFAULTS);saveConfig();restartTimers();return cfg});
 ipcMain.handle('get-status',()=>inSchedule()?'ACTIVO':'EN ESPERA');
+ipcMain.handle('get-last-scans',()=>lastScan);
 ipcMain.handle('test-sound',async()=>{playSound(false);return true});
