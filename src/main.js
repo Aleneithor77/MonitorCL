@@ -146,3 +146,4 @@ ipcMain.handle('get-status',()=>inSchedule()?'ACTIVO':'EN ESPERA');
 ipcMain.handle('get-last-scans',()=>lastScan);
 ipcMain.handle('get-scan-state',()=>({lastScan,scanErrors,inSchedule:inSchedule(),busy:scanBusy,nextScanAt,lastScanCount}));
 ipcMain.handle('test-sound',async()=>{playSound(false,true);return true});
+ipcMain.handle('show-current-status',()=>openStatusWindow());
