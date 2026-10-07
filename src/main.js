@@ -147,3 +147,4 @@ ipcMain.handle('get-last-scans',()=>lastScan);
 ipcMain.handle('get-scan-state',()=>({lastScan,scanErrors,inSchedule:inSchedule(),busy:scanBusy,nextScanAt,lastScanCount}));
 ipcMain.handle('test-sound',async()=>{playSound(false,true);return true});
 ipcMain.handle('show-current-status',()=>openStatusWindow());
+ipcMain.handle('show-new-records',()=>listWindow('Nuevos registros — última hora',"SELECT * FROM records WHERE classification='NORMAL' AND datetime(detected_at)>=datetime('now','-1 hour') AND source IN ('Programadas','Abiertas') ORDER BY datetime(detected_at) DESC"));
